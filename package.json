@@ -1,0 +1,11 @@
+{
+  "name": "fc-pocket",
+  "version": "1.0.0",
+  "description": "ブラウザで動くファミコン (NES) エミュレータ — タッチ操作対応のモバイル PWA",
+  "type": "module",
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "start": "npx --yes http-server -p 8080 -c-1 ."
+  },
+  "license": "MIT"
+}

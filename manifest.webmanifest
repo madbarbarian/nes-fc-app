@@ -1,0 +1,26 @@
+{
+  "name": "FC Pocket — ファミコンエミュレータ",
+  "short_name": "FC Pocket",
+  "description": "ブラウザで動くファミコン (NES) エミュレータ。タッチ操作対応のモバイルアプリです。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#1a1a1e",
+  "theme_color": "#8f1d21",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

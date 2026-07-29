@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#8f1d21"/>
+  <rect x="96" y="176" width="320" height="176" rx="24" fill="#e8e0d0"/>
+  <rect x="106" y="186" width="300" height="156" rx="18" fill="#b8b0a0"/>
+  <rect x="140" y="230" width="24" height="70" rx="5" fill="#2d2d33"/>
+  <rect x="117" y="253" width="70" height="24" rx="5" fill="#2d2d33"/>
+  <circle cx="330" cy="284" r="22" fill="#8f1d21"/>
+  <circle cx="382" cy="254" r="22" fill="#8f1d21"/>
+  <text x="256" y="152" text-anchor="middle" font-family="sans-serif" font-size="52" font-weight="800" font-style="italic" fill="#d4af6a">FC</text>
+</svg>
