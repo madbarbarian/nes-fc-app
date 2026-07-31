@@ -221,6 +221,9 @@ window.addEventListener('drop', async (e) => {
 $('btnDemo').addEventListener('click', async () => {
   saveBattery();
   await loadROM(buildDemoROM(), '内蔵デモ');
+  if (nes && romName === '内蔵デモ') {
+    status('デモ: 十字キー=ボール移動 / A・B=色替え / START=スクロール停止 / SELECT=逆走');
+  }
 });
 
 // ---------- メニュー ----------

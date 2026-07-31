@@ -88,11 +88,15 @@ export function buildDemoROM() {
   a.emit(0x88);             // DEY
   a.emit(0xD0); a.rel('ntLoop'); // BNE
 
-  // スプライト (OAM) を RAM $0200 に用意
-  a.emit(0xA9, 0x77);       // LDA #$77 (Y)
-  a.emit(0x85, 0x10);       // STA $10 (スプライトY作業用)
+  // ゼロページ初期化: $00=スクロール, $01=ボタン, $02=スプライトX, $03=Y, $04=属性
   a.emit(0xA9, 0x00);
-  a.emit(0x85, 0x00);       // STA $00 (スクロールカウンタ)
+  a.emit(0x85, 0x00);       // STA $00
+  a.emit(0x85, 0x01);       // STA $01
+  a.emit(0x85, 0x04);       // STA $04
+  a.emit(0xA9, 0x78);       // LDA #$78
+  a.emit(0x85, 0x02);       // STA $02 (スプライトX 初期位置)
+  a.emit(0xA9, 0x70);       // LDA #$70
+  a.emit(0x85, 0x03);       // STA $03 (スプライトY 初期位置)
 
   // スクロールリセット
   a.emit(0xA9, 0x00);
@@ -108,22 +112,76 @@ export function buildDemoROM() {
   a.label('forever');
   a.emit(0x4C); a.abs('forever'); // JMP forever
 
-  // ---- NMI ハンドラ: スクロール & スプライト移動 ----
+  // ---- NMI ハンドラ: パッド読み取り → スプライト操作 & スクロール ----
   a.label('nmi');
   a.emit(0x48);             // PHA
   a.emit(0x8A); a.emit(0x48); // TXA / PHA
 
+  // コントローラ1 読み取り → $01 (bit7=A,6=B,5=SELECT,4=START,3=上,2=下,1=左,0=右)
+  a.emit(0xA9, 0x01);       // LDA #$01
+  a.emit(0x8D, 0x16, 0x40); // STA $4016 (ストローブ ON)
+  a.emit(0xA9, 0x00);
+  a.emit(0x8D, 0x16, 0x40); // STA $4016 (ストローブ OFF)
+  a.emit(0xA2, 0x08);       // LDX #8
+  a.label('padLoop');
+  a.emit(0xAD, 0x16, 0x40); // LDA $4016
+  a.emit(0x4A);             // LSR (bit0 → キャリー)
+  a.emit(0x26, 0x01);       // ROL $01
+  a.emit(0xCA);             // DEX
+  a.emit(0xD0); a.rel('padLoop'); // BNE
+
+  // 十字キーでスプライト移動
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x08); // LDA $01 / AND #$08 (上)
+  a.emit(0xF0); a.rel('noUp');
+  a.emit(0xC6, 0x03);       // DEC $03
+  a.label('noUp');
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x04); // 下
+  a.emit(0xF0); a.rel('noDown');
+  a.emit(0xE6, 0x03);       // INC $03
+  a.label('noDown');
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x02); // 左
+  a.emit(0xF0); a.rel('noLeft');
+  a.emit(0xC6, 0x02);       // DEC $02
+  a.label('noLeft');
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x01); // 右
+  a.emit(0xF0); a.rel('noRight');
+  a.emit(0xE6, 0x02);       // INC $02
+  a.label('noRight');
+
+  // A/B ボタンでスプライトのパレット切り替え
+  a.emit(0xA9, 0x00);
+  a.emit(0x85, 0x04);       // STA $04 (属性=0)
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x80); // A ボタン
+  a.emit(0xF0); a.rel('noA');
+  a.emit(0xA9, 0x01);
+  a.emit(0x85, 0x04);       // 属性=1 (パレット1)
+  a.label('noA');
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x40); // B ボタン
+  a.emit(0xF0); a.rel('noB');
+  a.emit(0xA9, 0x02);
+  a.emit(0x85, 0x04);       // 属性=2 (パレット2)
+  a.label('noB');
+
+  // スクロール: START で停止 / SELECT で逆走
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x10); // START
+  a.emit(0xD0); a.rel('noScroll');
+  a.emit(0xA5, 0x01); a.emit(0x29, 0x20); // SELECT
+  a.emit(0xD0); a.rel('revScroll');
+  a.emit(0xE6, 0x00);       // INC $00 (順方向)
+  a.emit(0x4C); a.abs('noScroll'); // JMP noScroll
+  a.label('revScroll');
+  a.emit(0xC6, 0x00);       // DEC $00 (逆方向)
+  a.label('noScroll');
+
   // OAM 更新: スプライト0 を $0200 に書いて DMA
-  a.emit(0xE6, 0x00);       // INC $00 (フレームカウンタ)
-  a.emit(0xA5, 0x00);       // LDA $00
-  a.emit(0x8D, 0x00, 0x02); //   Y 座標 = counter → STA $0200
+  a.emit(0xA5, 0x03);       // LDA $03
+  a.emit(0x8D, 0x00, 0x02); // STA $0200 (Y)
   a.emit(0xA9, 0x03);       // LDA #3 (タイル番号)
   a.emit(0x8D, 0x01, 0x02); // STA $0201
-  a.emit(0xA9, 0x00);       // LDA #0 (属性)
-  a.emit(0x8D, 0x02, 0x02); // STA $0202
-  a.emit(0xA5, 0x00);       // LDA $00
-  a.emit(0x0A);             // ASL (X は2倍速で移動)
-  a.emit(0x8D, 0x03, 0x02); // STA $0203
+  a.emit(0xA5, 0x04);       // LDA $04
+  a.emit(0x8D, 0x02, 0x02); // STA $0202 (属性)
+  a.emit(0xA5, 0x02);       // LDA $02
+  a.emit(0x8D, 0x03, 0x02); // STA $0203 (X)
   a.emit(0xA9, 0x02);       // LDA #$02
   a.emit(0x8D, 0x14, 0x40); // STA $4014 (OAM DMA)
 

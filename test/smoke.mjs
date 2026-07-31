@@ -36,6 +36,25 @@ for (let i = 0; i < frame.length; i++) if (frame[i] !== snapshot[i]) diff++;
 console.log(`30 フレーム後に変化したピクセル数: ${diff}`);
 assert.ok(diff > 1000, 'スクロールにより画面が変化するはず');
 
+// --- 入力検証: 右ボタンでスプライト X が進むか ---
+import { BUTTON } from '../js/nes.js';
+const spriteX0 = nes.ppu.oam[3];
+nes.pad1.setButton(BUTTON.RIGHT, true);
+for (let i = 0; i < 30; i++) nes.runFrame();
+nes.pad1.setButton(BUTTON.RIGHT, false);
+const spriteX1 = nes.ppu.oam[3];
+console.log(`スプライト X: ${spriteX0} → ${spriteX1} (右ボタン30フレーム)`);
+assert.equal((spriteX1 - spriteX0) & 0xFF, 30, '右入力でスプライトが 1px/フレーム移動するはず');
+
+// --- 入力検証: START でスクロール停止 ---
+nes.pad1.setButton(BUTTON.START, true);
+nes.runFrame();
+const scrollHold = nes.ram[0];
+for (let i = 0; i < 10; i++) nes.runFrame();
+assert.equal(nes.ram[0], scrollHold, 'START 押下中はスクロールが止まるはず');
+nes.pad1.setButton(BUTTON.START, false);
+console.log('START でスクロール停止: OK');
+
 // --- NMI 検証: フレームカウンタ ($00) が進んでいるか ---
 const counter = nes.ram[0];
 assert.ok(counter > 100, `NMI が毎フレーム発火しているはず (counter=${counter})`);
