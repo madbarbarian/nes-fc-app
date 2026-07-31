@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#8f1d21">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>FC Pocket — ファミコンエミュレータ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">
+      <span class="fc-logo">FC</span> <span class="fc-name">Pocket</span>
+    </div>
+    <div class="topbar-buttons">
+      <button id="btnLoad" class="tb-btn" title="ROM を開く">📂 ROM</button>
+      <button id="btnDemo" class="tb-btn" title="内蔵デモ">▶ デモ</button>
+      <button id="btnMenu" class="tb-btn" title="メニュー">☰</button>
+    </div>
+    <input type="file" id="fileInput" accept=".nes" hidden>
+  </header>
+
+  <main id="screenArea">
+    <div id="screenFrame">
+      <canvas id="screen" width="256" height="240"></canvas>
+      <div id="overlay">
+        <div class="overlay-inner">
+          <div class="overlay-title">FC Pocket</div>
+          <p>「📂 ROM」からお手持ちの .nes ファイルを読み込むか、<br>「▶ デモ」で内蔵デモを起動してください。</p>
+          <p class="overlay-note">ファイルはこの端末内でのみ処理され、どこにも送信されません。</p>
+        </div>
+      </div>
+    </div>
+    <div id="statusLine"></div>
+  </main>
+
+  <section id="controls">
+    <div id="dpad" class="pad">
+      <div class="dpad-cross">
+        <button class="dbtn up"    data-btn="UP">▲</button>
+        <button class="dbtn left"  data-btn="LEFT">◀</button>
+        <div class="dbtn center"></div>
+        <button class="dbtn right" data-btn="RIGHT">▶</button>
+        <button class="dbtn down"  data-btn="DOWN">▼</button>
+      </div>
+    </div>
+    <div id="middleButtons">
+      <button class="sbtn" data-btn="SELECT">SELECT</button>
+      <button class="sbtn" data-btn="START">START</button>
+    </div>
+    <div id="abButtons" class="pad">
+      <button class="abtn b" data-btn="B">B</button>
+      <button class="abtn a" data-btn="A">A</button>
+    </div>
+  </section>
+
+  <div id="menuPanel" hidden>
+    <div class="menu-inner">
+      <h2>メニュー</h2>
+      <button id="btnResume" class="menu-btn">▶ 再開</button>
+      <button id="btnReset" class="menu-btn">🔄 リセット</button>
+      <button id="btnSaveState" class="menu-btn">💾 ステートセーブ</button>
+      <button id="btnLoadState" class="menu-btn">📥 ステートロード</button>
+      <button id="btnMute" class="menu-btn">🔊 サウンド ON/OFF</button>
+      <p class="menu-note">
+        キーボード: ← ↑ ↓ → / Z=B / X=A / Enter=START / Shift=SELECT<br>
+        ゲームパッド (Gamepad API) にも対応しています。
+      </p>
+    </div>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
