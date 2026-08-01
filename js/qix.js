@@ -230,7 +230,7 @@ export function buildQixROM() {
   a.label('doDeath');
   a.emit(0x20); a.abs('clearTrail'); // JSR clearTrail
   // ミス音 (ノイズ)
-  a.emit(0xA9, 0x3C);       // 定音量12
+  a.emit(0xA9, 0x1C);       // 定音量12 (長さカウンタ有効 = 自動で止まる)
   a.emit(0x8D, 0x0C, 0x40);
   a.emit(0xA9, 0x0C);       // 低めの周期
   a.emit(0x8D, 0x0E, 0x40);
