@@ -164,6 +164,32 @@ assert.equal(nes2.ram[MODE], 0, 'ゲームオーバーから START で再挑戦'
 assert.equal(nes2.ram[LIVES], 3, '再挑戦で残機3');
 console.log('ゲームオーバー: OK');
 
+// --- 敵の尾: 履歴が更新され、尾が軌跡に触れるとミスになる ---
+{
+  const nes3 = new NES(44100);
+  nes3.loadROM(buildQixROM());
+  for (let i = 0; i < 60; i++) nes3.runFrame();
+  const HISTX = 0x24, HISTY = 0x2C;
+  const hist0 = Array.from(nes3.ram.slice(HISTX, HISTX + 8));
+  for (let i = 0; i < 30; i++) nes3.runFrame();
+  const hist1 = Array.from(nes3.ram.slice(HISTX, HISTX + 8));
+  assert.notDeepEqual(hist0, hist1, '尾の履歴が敵の移動で更新される');
+  // OAM に尾スプライト (タイル16) が8個並ぶ
+  let tails = 0;
+  for (let s = 2; s < 10; s++) if (nes3.ram[0x200 + s * 4 + 1] === 16) tails++;
+  assert.equal(tails, 8, '尾スプライトが8個描画される');
+  // 尾の1点の真下に軌跡セルを置く → 接触判定でミスになる
+  const tx = nes3.ram[HISTX + 3] >> 3, ty = nes3.ram[HISTY + 3] >> 3;
+  nes3.ram[FIELD + ty * 32 + tx] = 2;
+  let tailKill = false;
+  for (let i = 0; i < 5; i++) {
+    nes3.runFrame();
+    if (nes3.ram[MODE] === 3 || nes3.ram[MODE] === 2) { tailKill = true; break; }
+  }
+  assert.ok(tailKill, '尾が軌跡に触れるとミスになる');
+  console.log('敵の尾: OK');
+}
+
 // --- 画面検証: フレームに陣地色が出ているか ---
 const frame = nes.runFrame();
 const colors = new Set();
