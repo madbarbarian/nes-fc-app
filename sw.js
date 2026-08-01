@@ -1,5 +1,7 @@
-// FC Pocket サービスワーカー — オフライン対応 (キャッシュファースト)
-const CACHE = 'fcp-v1';
+// FC Pocket サービスワーカー
+// ネットワーク優先 + キャッシュフォールバック:
+// オンライン時は常に最新版を取得し、オフライン時はキャッシュで動作する
+const CACHE = 'fcp-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -11,6 +13,7 @@ const ASSETS = [
   './js/apu.js',
   './js/mappers.js',
   './js/demo.js',
+  './js/qix.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-maskable.svg',
@@ -30,15 +33,16 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit ||
-      fetch(e.request).then((res) => {
-        if (res.ok && new URL(e.request.url).origin === location.origin) {
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
           const clone = res.clone();
           caches.open(CACHE).then((c) => c.put(e.request, clone));
         }
         return res;
       })
-    )
+      .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
