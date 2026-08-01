@@ -209,6 +209,7 @@ function loop(ts) {
     accumulator = 0;
   }
   pumpAudio();
+  updateDebugPanel(ts);
   // 音声がブラウザにブロックされたままならヒントを表示
   if (!audioHintShown && audioCtx && audioCtx.state === 'suspended' && !muted) {
     audioHintShown = true;
@@ -287,6 +288,7 @@ function rebuildFromTouches(e) {
   }
   const key = currentKey();
   if (key !== prevKey) applyTouchState(key.length > prevKey.length);
+  dlog(`${e.type} n=${e.touches.length} → [${key || 'none'}]`);
 }
 
 if (supportsTouch) {
@@ -325,6 +327,7 @@ function releaseAllButtons() {
   heldByPointer.clear();
   applyTouchState(false);
   if (nes) for (let i = 0; i < 8; i++) nes.pad1.setButton(i, false);
+  dlog('forced release (blur/hidden)');
 }
 window.addEventListener('blur', releaseAllButtons);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllButtons(); });
@@ -455,6 +458,44 @@ $('btnMute').addEventListener('click', () => {
 
 // デバッグ用: 現在のパッド状態
 window.__fcpPad = () => (nes ? Array.from(nes.pad1.buttons) : null);
+
+// ---------- デバッグ表示 (実機での不具合調査用) ----------
+let debugMode = localStorage.getItem('fcp-debug') === '1';
+const debugPanel = $('debugPanel');
+const debugEvents = [];
+let fpsCount = 0, fpsValue = 0, fpsLast = 0;
+
+function dlog(msg) {
+  if (!debugMode) return;
+  const t = (performance.now() / 1000).toFixed(1);
+  debugEvents.push(`${t} ${msg}`);
+  if (debugEvents.length > 10) debugEvents.shift();
+}
+
+const PAD_LABELS = ['A', 'B', 'SE', 'ST', '↑', '↓', '←', '→'];
+function updateDebugPanel(ts) {
+  fpsCount++;
+  if (ts - fpsLast >= 1000) { fpsValue = fpsCount; fpsCount = 0; fpsLast = ts; }
+  if (!debugMode) return;
+  const pad = nes ? Array.from(nes.pad1.buttons) : [];
+  const padStr = PAD_LABELS.map((l, i) => (pad[i] ? `[${l}]` : ` ${l} `)).join('');
+  const au = window.__fcpAudio;
+  debugPanel.textContent =
+    `PAD ${padStr}\n` +
+    `fps=${fpsValue} touches=${heldByPointer.size} ` +
+    `audio=${au ? `${au.mode}/${au.state}` : '-'}\n` +
+    debugEvents.join('\n');
+}
+
+$('btnDebug').addEventListener('click', () => {
+  debugMode = !debugMode;
+  localStorage.setItem('fcp-debug', debugMode ? '1' : '0');
+  debugPanel.hidden = !debugMode;
+  debugEvents.length = 0;
+  status(debugMode ? 'デバッグ表示 ON' : 'デバッグ表示 OFF');
+  menu.hidden = true; paused = false;
+});
+if (debugMode) debugPanel.hidden = false;
 
 // ---------- PWA ----------
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

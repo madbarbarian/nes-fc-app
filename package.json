@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node test/smoke.mjs && node test/qix.mjs",
+    "fuzz": "node test/fuzz.mjs",
     "start": "npx --yes http-server -p 8080 -c-1 ."
   },
   "license": "MIT"
