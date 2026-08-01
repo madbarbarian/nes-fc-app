@@ -29,7 +29,9 @@ const PAD = 0x00, PX = 0x02, PY = 0x03,
       TTY = 0x1B, TTX = 0x1C,
       LIVES = 0x1D, PCT = 0x1E, SPEED = 0x1F,
       OVERF = 0x20, FRAME = 0x21, T1 = 0x22, T2 = 0x23,
-      HISTX = 0x24, HISTY = 0x2C, HIDX = 0x34;  // 敵の尾 (位置履歴リング×8)
+      HISTX = 0x24, HISTY = 0x30, HIDX = 0x3C,  // 敵の尾 (位置履歴リング×12)
+      SEED = 0x3D, TAILDLY = 0x3E;              // 乱数シード / 尾の記録間隔
+const TAIL_LEN = 12;
 
 const START_PX = 16, START_PY = 28;
 const WIN_LO = 0x49, WIN_HI = 0x02;   // 585 セル = 780 の 75%
@@ -62,9 +64,9 @@ export function buildQixROM() {
   a.emit(0x2C, 0x02, 0x20);
   a.emit(0x10); a.rel('rWait2');
 
-  // --- ゼロページ変数クリア ($00-$34) ---
+  // --- ゼロページ変数クリア ($00-$3E) ---
   a.emit(0xA9, 0x00);       // LDA #0
-  a.emit(0xA2, 0x34);       // LDX #$34
+  a.emit(0xA2, 0x3E);       // LDX #$3E
   a.label('zpClr');
   a.emit(0x95, 0x00);       // STA $00,X
   a.emit(0xCA);             // DEX
@@ -150,7 +152,7 @@ export function buildQixROM() {
   a.emit(0xE8);             // INX
   a.emit(0xE0, 0x1E);       // CPX #30
   a.emit(0xD0); a.rel('ntRow');
-  // 上部バー初期表示: 残機アイコン×3 (列0-2) と勝利ライン目盛り (列22)
+  // 上部バー初期表示: 残機アイコン×4 (列0-3) と勝利ライン目盛り (列23)
   a.emit(0xA9, 0x20);
   a.emit(0x8D, 0x06, 0x20);
   a.emit(0xA9, 0x00);
@@ -159,9 +161,10 @@ export function buildQixROM() {
   a.emit(0x8D, 0x07, 0x20);
   a.emit(0x8D, 0x07, 0x20);
   a.emit(0x8D, 0x07, 0x20);
+  a.emit(0x8D, 0x07, 0x20);
   a.emit(0xA9, 0x20);
   a.emit(0x8D, 0x06, 0x20);
-  a.emit(0xA9, 0x16);       // 列22 (バー先頭は列4)
+  a.emit(0xA9, 0x17);       // 列23 (バー先頭は列5)
   a.emit(0x8D, 0x06, 0x20);
   a.emit(0xA9, 0x05);       // マーカータイル
   a.emit(0x8D, 0x07, 0x20);
@@ -174,9 +177,9 @@ export function buildQixROM() {
   a.emit(0xA9, 0x01); a.emit(0x85, DQX);
   a.emit(0xA9, 0x01); a.emit(0x85, DQY);
   a.emit(0xA9, 0x03); a.emit(0x85, MOVEDLY);
-  a.emit(0xA9, 0x03); a.emit(0x85, LIVES);
+  a.emit(0xA9, 0x04); a.emit(0x85, LIVES);
   // 尾の履歴を敵の初期位置で埋める
-  a.emit(0xA2, 0x07);       // LDX #7
+  a.emit(0xA2, TAIL_LEN - 1); // LDX #11
   a.label('histInit');
   a.emit(0xA9, 120);
   a.emit(0x95, HISTX);      // STA HISTX,X
@@ -184,6 +187,8 @@ export function buildQixROM() {
   a.emit(0x95, HISTY);      // STA HISTY,X
   a.emit(0xCA);
   a.emit(0x10); a.rel('histInit'); // BPL
+  a.emit(0xA9, 0xA7); a.emit(0x85, SEED);    // LFSR シード (非0)
+  a.emit(0xA9, 0x03); a.emit(0x85, TAILDLY);
 
   // --- APU 有効化 (パルス×2 + ノイズ) ---
   a.emit(0xA9, 0x0F);
@@ -328,7 +333,14 @@ export function buildQixROM() {
   a.emit(0xE6, FRAME);      // INC FRAME
   a.emit(0x20); a.abs('readPad');
   a.emit(0x20); a.abs('movePlayer');
+  a.emit(0x20); a.abs('wiggle');   // 敵のランダム方向転換
+  // 基本速度: 4フレームに1回休む (うねり+尾のぶん 25% 減速)
+  a.emit(0xA5, FRAME);
+  a.emit(0x29, 0x03);
+  a.emit(0xC9, 0x03);
+  a.emit(0xF0); a.rel('baseSkip');
   a.emit(0x20); a.abs('moveQix');
+  a.label('baseSkip');
   // 進行度に応じた敵スピードアップ (SPEED 1=1.5倍, 2=2倍)
   a.emit(0xA5, SPEED);
   a.emit(0xF0); a.rel('spdSkip');
@@ -547,7 +559,7 @@ export function buildQixROM() {
   a.emit(0xA5, QXP);
   a.emit(0x38); a.emit(0xE9, 0x04);         // 中心 → 左上 X
   a.emit(0x8D, 0x07, 0x02);
-  // スプライト2-9: 敵の尾 (履歴の8点)
+  // スプライト2-13: 敵の尾 (履歴の12点)
   a.emit(0xA0, 0x08);       // LDY #8 (OAM オフセット)
   a.emit(0xA2, 0x00);       // LDX #0
   a.label('boTail');
@@ -566,28 +578,54 @@ export function buildQixROM() {
   a.emit(0x99, 0x00, 0x02);
   a.emit(0xC8);
   a.emit(0xE8);             // INX
-  a.emit(0xE0, 0x08);       // CPX #8
+  a.emit(0xE0, TAIL_LEN);   // CPX #12
   a.emit(0xD0); a.rel('boTail');
+  a.emit(0x60);             // RTS
+
+  // --- 敵のランダム方向転換 (LFSR 乱数で約1/16の頻度) ---
+  a.label('wiggle');
+  a.emit(0xA5, SEED);
+  a.emit(0x0A);             // ASL
+  a.emit(0x90); a.rel('wNoEor');
+  a.emit(0x49, 0x1D);       // EOR #$1D (最大周期タップ)
+  a.label('wNoEor');
+  a.emit(0x85, SEED);
+  a.emit(0x29, 0x3F);       // AND #$3F (方向転換は平均32フレームに1回)
+  a.emit(0xD0); a.rel('wChkY');
+  a.emit(0xA9, 0x00);       // 値0 → X方向反転
+  a.emit(0x38); a.emit(0xE5, DQX);
+  a.emit(0x85, DQX);
+  a.emit(0x60);
+  a.label('wChkY');
+  a.emit(0xC9, 0x01);       // 値1 → Y方向反転
+  a.emit(0xD0); a.rel('wDone');
+  a.emit(0xA9, 0x00);
+  a.emit(0x38); a.emit(0xE5, DQY);
+  a.emit(0x85, DQY);
+  a.label('wDone');
   a.emit(0x60);             // RTS
 
   // --- 敵の尾: 履歴記録 & 軌跡との接触判定 ---
   a.label('updateTail');
-  // 2フレームに1回、現在位置を履歴に記録
-  a.emit(0xA5, FRAME);
-  a.emit(0x29, 0x01);
+  // 3フレームに1回、現在位置を履歴に記録
+  a.emit(0xC6, TAILDLY);    // DEC TAILDLY
   a.emit(0xD0); a.rel('utCheck');
-  a.emit(0xE6, HIDX);
-  a.emit(0xA5, HIDX);
-  a.emit(0x29, 0x07);
-  a.emit(0x85, HIDX);
-  a.emit(0xAA);             // TAX
+  a.emit(0xA9, 0x03);
+  a.emit(0x85, TAILDLY);
+  a.emit(0xA6, HIDX);       // LDX HIDX
+  a.emit(0xE8);             // INX
+  a.emit(0xE0, TAIL_LEN);   // CPX #12
+  a.emit(0x90); a.rel('utIdx');
+  a.emit(0xA2, 0x00);       // LDX #0
+  a.label('utIdx');
+  a.emit(0x86, HIDX);       // STX HIDX
   a.emit(0xA5, QXP);
   a.emit(0x95, HISTX);      // STA HISTX,X
   a.emit(0xA5, QYP);
   a.emit(0x95, HISTY);      // STA HISTY,X
   a.label('utCheck');
   // 尾の各点が軌跡セルに触れていたらミス
-  a.emit(0xA2, 0x07);       // LDX #7
+  a.emit(0xA2, TAIL_LEN - 1); // LDX #11
   a.label('utLoop');
   a.emit(0x86, T1);         // STX T1
   a.emit(0xB5, HISTY);      // LDA HISTY,X
@@ -637,6 +675,12 @@ export function buildQixROM() {
     a.emit(0x46, T2);       // LSR T2
     a.emit(0x66, T1);       // ROR T1
   }
+  a.emit(0xA5, T1);         // バー長を22に制限 (数字表示と重ならないように)
+  a.emit(0xC9, 0x17);
+  a.emit(0x90); a.rel('dbLenOk');
+  a.emit(0xA9, 0x16);
+  a.emit(0x85, T1);
+  a.label('dbLenOk');
   a.emit(0xA9, 0x20);
   a.emit(0x8D, 0x06, 0x20);
   a.emit(0xA9, 0x00);
@@ -644,7 +688,7 @@ export function buildQixROM() {
   // 列0-27: 残機 / 空き / バー / マーカー
   a.emit(0xA0, 0x00);       // LDY #0 (列)
   a.label('dbCol');
-  a.emit(0xC0, 0x03);       // 列0-2: 残機アイコン
+  a.emit(0xC0, 0x04);       // 列0-3: 残機アイコン
   a.emit(0xB0); a.rel('dbBar');
   a.emit(0xC4, LIVES);      // CPY LIVES
   a.emit(0x90); a.rel('dbLife');
@@ -653,13 +697,13 @@ export function buildQixROM() {
   a.emit(0xA9, 0x04);       // 自機タイル
   a.emit(0x4C); a.abs('dbWrite');
   a.label('dbBar');
-  a.emit(0xC0, 0x04);       // 列3 は空け、バーは列4から
+  a.emit(0xC0, 0x05);       // 列4 は空け、バーは列5から
   a.emit(0x90); a.rel('dbEmpty');
   a.emit(0x98);             // TYA
-  a.emit(0x38); a.emit(0xE9, 0x04); // SEC/SBC #4
+  a.emit(0x38); a.emit(0xE9, 0x05); // SEC/SBC #5
   a.emit(0xC5, T1);         // CMP T1 (バー長)
   a.emit(0x90); a.rel('dbFill');
-  a.emit(0xC0, 0x16);       // CPY #22 (勝利ライン = 4+18)
+  a.emit(0xC0, 0x17);       // CPY #23 (勝利ライン = 5+18)
   a.emit(0xF0); a.rel('dbMark');
   a.label('dbEmpty');
   a.emit(0xA9, 0x00);
@@ -879,14 +923,14 @@ export function buildQixROM() {
   a.emit(0xA5, T2); a.emit(0x65, CLM_HI); a.emit(0x85, T2);
   a.emit(0xA5, T2);
   a.emit(0x85, PCT);
-  // 敵スピードアップ判定
+  // 敵スピードアップ判定 (40% / 70%)
   a.emit(0xA9, 0x00);
   a.emit(0x85, SPEED);
   a.emit(0xA5, PCT);
-  a.emit(0xC9, 30);
+  a.emit(0xC9, 40);
   a.emit(0x90); a.rel('spdSet');
   a.emit(0xE6, SPEED);
-  a.emit(0xC9, 55);
+  a.emit(0xC9, 70);
   a.emit(0x90); a.rel('spdSet');
   a.emit(0xE6, SPEED);
   a.label('spdSet');
