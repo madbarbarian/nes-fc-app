@@ -31,30 +31,107 @@ function status(msg) {
 }
 
 // ---------- オーディオ ----------
-function initAudio() {
-  if (audioCtx) return;
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const bufSize = 2048;
-    audioNode = audioCtx.createScriptProcessor(bufSize, 0, 1);
-    audioNode.onaudioprocess = (e) => {
-      const out = e.outputBuffer.getChannelData(0);
-      if (!nes || !running || paused || muted) { out.fill(0); return; }
-      const n = nes.apu.readSamples(out);
-      // バッファ不足時は最後のサンプルで埋める (プチノイズ防止)
-      const last = n > 0 ? out[n - 1] : 0;
-      for (let i = n; i < out.length; i++) out[i] = last;
+// AudioWorklet (推奨) → ScriptProcessor の順で初期化。
+// iOS Safari は入力0chの ScriptProcessor が発火しない事があるため 1ch で作る。
+const WORKLET_SRC = `
+class FcpOutput extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buf = new Float32Array(16384);
+    this.r = 0; this.w = 0; this.last = 0;
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      for (let i = 0; i < d.length; i++) {
+        const n = (this.w + 1) & 16383;
+        if (n !== this.r) { this.buf[this.w] = d[i]; this.w = n; }
+      }
     };
-    audioNode.connect(audioCtx.destination);
-  } catch (e) {
-    console.warn('オーディオ初期化失敗:', e);
   }
+  process(inputs, outputs) {
+    const out = outputs[0][0];
+    for (let i = 0; i < out.length; i++) {
+      if (this.r !== this.w) { this.last = this.buf[this.r]; this.r = (this.r + 1) & 16383; }
+      else { this.last *= 0.999; } // 枯渇時はフェードしてプチノイズ防止
+      out[i] = this.last;
+    }
+    return true;
+  }
+}
+registerProcessor('fcp-output', FcpOutput);
+`;
+
+let audioMode = 'none';
+let workletNode = null;
+let audioInitPromise = null;
+const audioTmp = new Float32Array(8192);
+
+function initAudio() {
+  if (audioInitPromise) return audioInitPromise;
+  audioInitPromise = (async () => {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // iOS 16.4+: マナーモード (サイレントスイッチ) でも鳴らす
+      if (navigator.audioSession) {
+        try { navigator.audioSession.type = 'playback'; } catch {}
+      }
+      if (audioCtx.audioWorklet) {
+        try {
+          const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'text/javascript' }));
+          await audioCtx.audioWorklet.addModule(url);
+          workletNode = new AudioWorkletNode(audioCtx, 'fcp-output', {
+            numberOfInputs: 0, outputChannelCount: [1],
+          });
+          workletNode.connect(audioCtx.destination);
+          audioMode = 'worklet';
+        } catch (e) {
+          console.warn('AudioWorklet 初期化失敗、ScriptProcessor に切替:', e);
+        }
+      }
+      if (audioMode !== 'worklet') {
+        audioNode = audioCtx.createScriptProcessor(2048, 1, 1);
+        audioNode.onaudioprocess = (e) => {
+          const out = e.outputBuffer.getChannelData(0);
+          if (!nes || !running || paused || muted) { out.fill(0); return; }
+          const n = nes.apu.readSamples(out);
+          const last = n > 0 ? out[n - 1] : 0;
+          for (let i = n; i < out.length; i++) out[i] = last;
+        };
+        audioNode.connect(audioCtx.destination);
+        audioMode = 'script';
+      }
+      // デバッグ用
+      window.__fcpAudio = {
+        get mode() { return audioMode; },
+        get state() { return audioCtx ? audioCtx.state : 'none'; },
+        get pumped() { return pumpedSamples; },
+      };
+    } catch (e) {
+      console.warn('オーディオ初期化失敗:', e);
+    }
+  })();
+  return audioInitPromise;
 }
 
 function resumeAudio() {
-  initAudio();
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  initAudio().then(() => {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  });
 }
+
+// AudioWorklet モード: メインループから毎フレームサンプルを送る
+let pumpedSamples = 0;
+function pumpAudio() {
+  if (!nes || audioMode !== 'worklet') return;
+  const n = nes.apu.readSamples(audioTmp); // ミュート中も読み捨ててバッファ溢れ防止
+  if (n > 0 && !muted && running && !paused && workletNode) {
+    workletNode.port.postMessage(audioTmp.slice(0, n));
+    pumpedSamples += n;
+  }
+}
+
+// どこをタップ/クリック/キー入力しても音声を有効化 (モバイルの自動再生制限対策)
+document.addEventListener('pointerdown', resumeAudio, { capture: true });
+document.addEventListener('keydown', resumeAudio, { capture: true });
 
 // ---------- エミュレーション ----------
 async function hashROM(bytes) {
@@ -67,7 +144,7 @@ async function hashROM(bytes) {
 
 async function loadROM(bytes, name) {
   try {
-    initAudio();
+    await initAudio();
     const sr = audioCtx ? audioCtx.sampleRate : 44100;
     const machine = new NES(sr);
     machine.loadROM(bytes);
@@ -131,7 +208,14 @@ function loop(ts) {
     renderFrame();
     accumulator = 0;
   }
+  pumpAudio();
+  // 音声がブラウザにブロックされたままならヒントを表示
+  if (!audioHintShown && audioCtx && audioCtx.state === 'suspended' && !muted) {
+    audioHintShown = true;
+    status('🔇 音を出すには画面をどこかタップしてください');
+  }
 }
+let audioHintShown = false;
 requestAnimationFrame(loop);
 
 // ---------- 入力: タッチ ----------
