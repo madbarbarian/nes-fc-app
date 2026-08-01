@@ -26,7 +26,9 @@ const PAD = 0x00, PX = 0x02, PY = 0x03,
       PTRA = 0x10, PTRB = 0x12, PTRC = 0x14,
       WINF = 0x16, WINCNT = 0x17,
       DIRTY_R = 0x18, DIRTY_C = 0x19, DIRTY_F = 0x1A,
-      TTY = 0x1B, TTX = 0x1C;
+      TTY = 0x1B, TTX = 0x1C,
+      LIVES = 0x1D, PCT = 0x1E, SPEED = 0x1F,
+      OVERF = 0x20, FRAME = 0x21, T1 = 0x22, T2 = 0x23;
 
 const START_PX = 16, START_PY = 28;
 const WIN_LO = 0x49, WIN_HI = 0x02;   // 585 セル = 780 の 75%
@@ -59,9 +61,9 @@ export function buildQixROM() {
   a.emit(0x2C, 0x02, 0x20);
   a.emit(0x10); a.rel('rWait2');
 
-  // --- ゼロページ変数クリア ($00-$1F) ---
+  // --- ゼロページ変数クリア ($00-$23) ---
   a.emit(0xA9, 0x00);       // LDA #0
-  a.emit(0xA2, 0x1F);       // LDX #$1F
+  a.emit(0xA2, 0x23);       // LDX #$23
   a.label('zpClr');
   a.emit(0x95, 0x00);       // STA $00,X
   a.emit(0xCA);             // DEX
@@ -147,12 +149,20 @@ export function buildQixROM() {
   a.emit(0xE8);             // INX
   a.emit(0xE0, 0x1E);       // CPX #30
   a.emit(0xD0); a.rel('ntRow');
-  // 勝利ライン目盛り (行0 列18 にマーカータイル)
+  // 上部バー初期表示: 残機アイコン×3 (列0-2) と勝利ライン目盛り (列22)
   a.emit(0xA9, 0x20);
   a.emit(0x8D, 0x06, 0x20);
-  a.emit(0xA9, 0x12);       // 列18
+  a.emit(0xA9, 0x00);
   a.emit(0x8D, 0x06, 0x20);
-  a.emit(0xA9, 0x05);       // タイル5
+  a.emit(0xA9, 0x04);       // 自機タイル = 残機アイコン
+  a.emit(0x8D, 0x07, 0x20);
+  a.emit(0x8D, 0x07, 0x20);
+  a.emit(0x8D, 0x07, 0x20);
+  a.emit(0xA9, 0x20);
+  a.emit(0x8D, 0x06, 0x20);
+  a.emit(0xA9, 0x16);       // 列22 (バー先頭は列4)
+  a.emit(0x8D, 0x06, 0x20);
+  a.emit(0xA9, 0x05);       // マーカータイル
   a.emit(0x8D, 0x07, 0x20);
 
   // --- ゲーム変数初期化 ---
@@ -163,6 +173,13 @@ export function buildQixROM() {
   a.emit(0xA9, 0x01); a.emit(0x85, DQX);
   a.emit(0xA9, 0x01); a.emit(0x85, DQY);
   a.emit(0xA9, 0x03); a.emit(0x85, MOVEDLY);
+  a.emit(0xA9, 0x03); a.emit(0x85, LIVES);
+
+  // --- APU 有効化 (パルス×2 + ノイズ) ---
+  a.emit(0xA9, 0x0F);
+  a.emit(0x8D, 0x15, 0x40); // STA $4015
+  a.emit(0xA9, 0x40);
+  a.emit(0x8D, 0x17, 0x40); // STA $4017 (フレームIRQ禁止)
 
   // スクロールリセット & 描画/NMI 有効化
   a.emit(0xA9, 0x00);
@@ -185,9 +202,29 @@ export function buildQixROM() {
 
   a.label('doFill');
   a.emit(0x20); a.abs('fill');       // JSR fill
+  // 陣地確保ファンファーレ (パルス1)
+  a.emit(0xA9, 0x9C);       // duty50% / 定音量12
+  a.emit(0x8D, 0x00, 0x40);
+  a.emit(0xA9, 0x08);
+  a.emit(0x8D, 0x01, 0x40); // スイープ無効
+  a.emit(0xA9, 0xDE);       // 約500Hz
+  a.emit(0x8D, 0x02, 0x40);
+  a.emit(0xA9, 0xF8);       // 長さ約0.25秒
+  a.emit(0x8D, 0x03, 0x40);
   a.emit(0x4C); a.abs('startRedraw');
   a.label('doDeath');
   a.emit(0x20); a.abs('clearTrail'); // JSR clearTrail
+  // ミス音 (ノイズ)
+  a.emit(0xA9, 0x3C);       // 定音量12
+  a.emit(0x8D, 0x0C, 0x40);
+  a.emit(0xA9, 0x0C);       // 低めの周期
+  a.emit(0x8D, 0x0E, 0x40);
+  a.emit(0xA9, 0xA0);       // 長さ約0.4秒
+  a.emit(0x8D, 0x0F, 0x40);
+  a.emit(0xC6, LIVES);      // DEC LIVES
+  a.emit(0xD0); a.rel('startRedraw');
+  a.emit(0xA9, 0x01);
+  a.emit(0x85, OVERF);      // 残機0 → ゲームオーバーフラグ
   a.label('startRedraw');
   a.emit(0xA9, 0x01);
   a.emit(0x85, DRAWROW);    // 再描画は行1から
@@ -228,10 +265,10 @@ export function buildQixROM() {
   a.emit(0xA9, 0x02);
   a.emit(0x8D, 0x14, 0x40);
 
-  // 勝利モード: 背景色を点滅
+  // 勝利/ゲームオーバー: 背景色を点滅 (勝利=緑, ゲームオーバー=赤)
   a.emit(0xA5, MODE);
   a.emit(0xC9, 0x04);
-  a.emit(0xD0); a.rel('noFlash');
+  a.emit(0x90); a.rel('noFlash');   // MODE<4 → 点滅なし
   a.emit(0xE6, WINCNT);     // INC WINCNT
   a.emit(0xA9, 0x3F);
   a.emit(0x8D, 0x06, 0x20);
@@ -240,7 +277,13 @@ export function buildQixROM() {
   a.emit(0xA5, WINCNT);
   a.emit(0x29, 0x10);       // AND #$10
   a.emit(0xF0); a.rel('flashDark');
-  a.emit(0xA9, 0x2A);       // 緑
+  a.emit(0xA5, MODE);
+  a.emit(0xC9, 0x05);
+  a.emit(0xF0); a.rel('flashRed');
+  a.emit(0xA9, 0x2A);       // 緑 (勝利)
+  a.emit(0x4C); a.abs('flashWrite');
+  a.label('flashRed');
+  a.emit(0xA9, 0x16);       // 赤 (ゲームオーバー)
   a.emit(0x4C); a.abs('flashWrite');
   a.label('flashDark');
   a.emit(0xA9, 0x0F);       // 黒
@@ -259,7 +302,7 @@ export function buildQixROM() {
   a.emit(0xA5, MODE);
   a.emit(0xF0); a.rel('logicPlay');   // MODE=0
   a.emit(0xC9, 0x04);
-  a.emit(0xF0); a.rel('logicWin');    // MODE=4
+  a.emit(0xB0); a.rel('logicWin');    // MODE>=4 (勝利/ゲームオーバー)
   a.emit(0x4C); a.abs('nmiEnd');
 
   a.label('logicWin');
@@ -272,9 +315,21 @@ export function buildQixROM() {
   a.emit(0x4C); a.abs('nmiEnd');
 
   a.label('logicPlay');
+  a.emit(0xE6, FRAME);      // INC FRAME
   a.emit(0x20); a.abs('readPad');
   a.emit(0x20); a.abs('movePlayer');
   a.emit(0x20); a.abs('moveQix');
+  // 進行度に応じた敵スピードアップ (SPEED 1=1.5倍, 2=2倍)
+  a.emit(0xA5, SPEED);
+  a.emit(0xF0); a.rel('spdSkip');
+  a.emit(0xC9, 0x02);
+  a.emit(0xB0); a.rel('spdExtra');
+  a.emit(0xA5, FRAME);
+  a.emit(0x29, 0x01);       // 速度1は隔フレームで追加移動
+  a.emit(0xF0); a.rel('spdSkip');
+  a.label('spdExtra');
+  a.emit(0x20); a.abs('moveQix');
+  a.label('spdSkip');
   a.emit(0x20); a.abs('buildOAM');
 
   a.label('nmiEnd');
@@ -379,6 +434,15 @@ export function buildQixROM() {
   // 空き地 → 軌跡を引く
   a.emit(0xA9, 0x02);
   a.emit(0x91, PTRA);       // STA (PTRA),Y
+  // 線引きブリップ音 (パルス2, ごく短く)
+  a.emit(0xA9, 0x96);       // duty50% / 定音量6
+  a.emit(0x8D, 0x04, 0x40);
+  a.emit(0xA9, 0x08);
+  a.emit(0x8D, 0x05, 0x40);
+  a.emit(0xA9, 0x6F);       // 約1kHz
+  a.emit(0x8D, 0x06, 0x40);
+  a.emit(0xA9, 0x18);       // 長さ極短
+  a.emit(0x8D, 0x07, 0x40);
   a.emit(0xA5, TTY); a.emit(0x85, DIRTY_R);
   a.emit(0xA5, TTX); a.emit(0x85, DIRTY_C);
   a.emit(0xA9, 0x01);
@@ -495,40 +559,118 @@ export function buildQixROM() {
   a.emit(0x60);             // RTS
 
   a.label('drawBar');
-  // バー長 = 陣地数 >> 5 (最大24)
-  a.emit(0xA5, CLM_LO); a.emit(0x85, T0);
-  a.emit(0xA5, CLM_HI); a.emit(0x85, T0 + 1);
+  // バー長 T1 = 陣地数 >> 5 (最大24)
+  a.emit(0xA5, CLM_LO); a.emit(0x85, T1);
+  a.emit(0xA5, CLM_HI); a.emit(0x85, T2);
   for (let i = 0; i < 5; i++) {
-    a.emit(0x46, T0 + 1);   // LSR T0+1
-    a.emit(0x66, T0);       // ROR T0
+    a.emit(0x46, T2);       // LSR T2
+    a.emit(0x66, T1);       // ROR T1
   }
   a.emit(0xA9, 0x20);
   a.emit(0x8D, 0x06, 0x20);
   a.emit(0xA9, 0x00);
   a.emit(0x8D, 0x06, 0x20);
+  // 列0-27: 残機 / 空き / バー / マーカー
   a.emit(0xA0, 0x00);       // LDY #0 (列)
   a.label('dbCol');
-  a.emit(0xC4, T0);         // CPY T0
-  a.emit(0xB0); a.rel('dbNotFill');
-  a.emit(0xA9, 0x01);       // 塗りタイル
+  a.emit(0xC0, 0x03);       // 列0-2: 残機アイコン
+  a.emit(0xB0); a.rel('dbBar');
+  a.emit(0xC4, LIVES);      // CPY LIVES
+  a.emit(0x90); a.rel('dbLife');
+  a.emit(0x4C); a.abs('dbEmpty');
+  a.label('dbLife');
+  a.emit(0xA9, 0x04);       // 自機タイル
   a.emit(0x4C); a.abs('dbWrite');
-  a.label('dbNotFill');
-  a.emit(0xC0, 0x12);       // CPY #18 (勝利ライン)
-  a.emit(0xD0); a.rel('dbEmpty');
-  a.emit(0xA9, 0x05);       // マーカータイル
-  a.emit(0x4C); a.abs('dbWrite');
+  a.label('dbBar');
+  a.emit(0xC0, 0x04);       // 列3 は空け、バーは列4から
+  a.emit(0x90); a.rel('dbEmpty');
+  a.emit(0x98);             // TYA
+  a.emit(0x38); a.emit(0xE9, 0x04); // SEC/SBC #4
+  a.emit(0xC5, T1);         // CMP T1 (バー長)
+  a.emit(0x90); a.rel('dbFill');
+  a.emit(0xC0, 0x16);       // CPY #22 (勝利ライン = 4+18)
+  a.emit(0xF0); a.rel('dbMark');
   a.label('dbEmpty');
   a.emit(0xA9, 0x00);
+  a.emit(0x4C); a.abs('dbWrite');
+  a.label('dbFill');
+  a.emit(0xA9, 0x01);
+  a.emit(0x4C); a.abs('dbWrite');
+  a.label('dbMark');
+  a.emit(0xA9, 0x05);
   a.label('dbWrite');
   a.emit(0x8D, 0x07, 0x20);
   a.emit(0xC8);
-  a.emit(0xC0, 0x20);
+  a.emit(0xC0, 0x1C);       // CPY #28
   a.emit(0xD0); a.rel('dbCol');
-  // 再描画完了 → 勝利判定へ
+  // 列28-30: 獲得率の数字 (PCT)
+  a.emit(0xA5, PCT);
+  a.emit(0x85, T2);
+  a.emit(0xC9, 0x64);       // CMP #100
+  a.emit(0x90); a.rel('dbNoHund');
+  a.emit(0x38); a.emit(0xE9, 0x64);
+  a.emit(0x85, T2);
+  a.emit(0xA9, 0x07);       // '1' (タイル6+1)
+  a.emit(0x4C); a.abs('dbHundW');
+  a.label('dbNoHund');
+  a.emit(0xA9, 0x00);
+  a.label('dbHundW');
+  a.emit(0x8D, 0x07, 0x20);
+  a.emit(0xA9, 0x00);
+  a.emit(0x85, T1);         // 十の位カウンタ
+  a.label('dbTensL');
+  a.emit(0xA5, T2);
+  a.emit(0xC9, 0x0A);
+  a.emit(0x90); a.rel('dbTensD');
+  a.emit(0x38); a.emit(0xE9, 0x0A);
+  a.emit(0x85, T2);
+  a.emit(0xE6, T1);
+  a.emit(0x4C); a.abs('dbTensL');
+  a.label('dbTensD');
+  a.emit(0xA5, PCT);
+  a.emit(0xC9, 0x64);
+  a.emit(0xB0); a.rel('dbTensShow'); // 100%なら十の位0も表示
+  a.emit(0xA5, T1);
+  a.emit(0xD0); a.rel('dbTensShow');
+  a.emit(0xA9, 0x00);       // 先頭ゼロは空白
+  a.emit(0x4C); a.abs('dbTensW');
+  a.label('dbTensShow');
+  a.emit(0xA5, T1);
+  a.emit(0x18); a.emit(0x69, 0x06);
+  a.label('dbTensW');
+  a.emit(0x8D, 0x07, 0x20);
+  a.emit(0xA5, T2);         // 一の位
+  a.emit(0x18); a.emit(0x69, 0x06);
+  a.emit(0x8D, 0x07, 0x20);
+  a.emit(0xA9, 0x00);       // 列31 空白
+  a.emit(0x8D, 0x07, 0x20);
+  // 再描画完了 → 勝利 / ゲームオーバー / プレイ再開
   a.emit(0xA5, WINF);
-  a.emit(0xF0); a.rel('dbToPlay');
+  a.emit(0xF0); a.rel('dbChkOver');
   a.emit(0xA9, 0x04);
   a.emit(0x85, MODE);       // MODE=4 (勝利)
+  a.emit(0xA9, 0x98);       // 勝利音: パルス1 高音ロング
+  a.emit(0x8D, 0x00, 0x40);
+  a.emit(0xA9, 0x08);
+  a.emit(0x8D, 0x01, 0x40);
+  a.emit(0xA9, 0x7E);       // 約880Hz
+  a.emit(0x8D, 0x02, 0x40);
+  a.emit(0xA9, 0x08);       // 長め
+  a.emit(0x8D, 0x03, 0x40);
+  a.emit(0x60);
+  a.label('dbChkOver');
+  a.emit(0xA5, OVERF);
+  a.emit(0xF0); a.rel('dbToPlay');
+  a.emit(0xA9, 0x05);
+  a.emit(0x85, MODE);       // MODE=5 (ゲームオーバー)
+  a.emit(0xA9, 0x98);       // ゲームオーバー音: パルス1 低音ロング
+  a.emit(0x8D, 0x00, 0x40);
+  a.emit(0xA9, 0x08);
+  a.emit(0x8D, 0x01, 0x40);
+  a.emit(0xA9, 0xFC);       // 約220Hz
+  a.emit(0x8D, 0x02, 0x40);
+  a.emit(0xA9, 0x09);       // 長め (周期上位ビット1)
+  a.emit(0x8D, 0x03, 0x40);
   a.emit(0x60);
   a.label('dbToPlay');
   a.emit(0xA9, 0x00);
@@ -654,6 +796,29 @@ export function buildQixROM() {
   a.emit(0xA9, 0x01);
   a.emit(0x85, WINF);
   a.label('noWin');
+  // 獲得率 PCT = (CLM×33)>>8 (780セル→100%)
+  a.emit(0xA5, CLM_LO); a.emit(0x85, T1);
+  a.emit(0xA5, CLM_HI); a.emit(0x85, T2);
+  for (let i = 0; i < 5; i++) {
+    a.emit(0x06, T1);       // ASL T1
+    a.emit(0x26, T2);       // ROL T2
+  }
+  a.emit(0x18);             // CLC
+  a.emit(0xA5, T1); a.emit(0x65, CLM_LO); a.emit(0x85, T1);
+  a.emit(0xA5, T2); a.emit(0x65, CLM_HI); a.emit(0x85, T2);
+  a.emit(0xA5, T2);
+  a.emit(0x85, PCT);
+  // 敵スピードアップ判定
+  a.emit(0xA9, 0x00);
+  a.emit(0x85, SPEED);
+  a.emit(0xA5, PCT);
+  a.emit(0xC9, 30);
+  a.emit(0x90); a.rel('spdSet');
+  a.emit(0xE6, SPEED);
+  a.emit(0xC9, 55);
+  a.emit(0x90); a.rel('spdSet');
+  a.emit(0xE6, SPEED);
+  a.label('spdSet');
   a.emit(0x60);             // RTS
 
   // --- ミス処理: 軌跡消去 & 自機リセット ---
@@ -736,6 +901,19 @@ export function buildQixROM() {
     return d <= 2 ? 1 : (d <= 3.5 ? 2 : 0);
   });
   setTile(5, (x) => (x === 3 || x === 4) ? 2 : 0);                  // 勝利ライン目盛り
+  // タイル6-15: 数字 0-9 (3×5 フォントを2倍幅で描画)
+  const FONT = [
+    '111101101101111', '010110010010111', '111001111100111', '111001111001111',
+    '101101111001001', '111100111001111', '111100111101111', '111001001001001',
+    '111101111101111', '111101111001111',
+  ];
+  for (let d = 0; d < 10; d++) {
+    setTile(6 + d, (x, y) => {
+      if (y < 1 || y > 5 || x < 1 || x > 6) return 0;
+      const fx = (x - 1) >> 1, fy = y - 1;
+      return FONT[d][fy * 3 + fx] === '1' ? 3 : 0;
+    });
+  }
 
   // ---- iNES 組み立て ----
   const rom = new Uint8Array(16 + prg.length + chr.length);
