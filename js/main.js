@@ -265,30 +265,69 @@ function buttonsAt(x, y) {
   return el && el.dataset.btn ? [el.dataset.btn] : [];
 }
 
+// ==== タッチ: touch イベントの e.touches (現在触れている全指の生リスト) から
+// 毎回状態を丸ごと再構築する。個々の down/up を追跡しないため、
+// iOS Safari で離しイベントが配信されない場合でも次のイベントで自己修復する ====
+const supportsTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+function currentKey() {
+  const arr = [];
+  for (const names of heldByPointer.values()) arr.push(...names);
+  return arr.sort().join();
+}
+
+function rebuildFromTouches(e) {
+  const prevKey = currentKey();
+  for (const k of Array.from(heldByPointer.keys())) {
+    if (typeof k === 'string' && k.startsWith('t')) heldByPointer.delete(k);
+  }
+  for (const t of e.touches) {
+    const names = buttonsAt(t.clientX, t.clientY);
+    if (names.length) heldByPointer.set('t' + t.identifier, names);
+  }
+  const key = currentKey();
+  if (key !== prevKey) applyTouchState(key.length > prevKey.length);
+}
+
+if (supportsTouch) {
+  controls.addEventListener('touchstart', (e) => { e.preventDefault(); rebuildFromTouches(e); }, { passive: false });
+  controls.addEventListener('touchmove', (e) => { e.preventDefault(); rebuildFromTouches(e); }, { passive: false });
+  // 離し/キャンセルはどこで起きても全指リストから再構築 (取りこぼし自己修復)
+  window.addEventListener('touchend', rebuildFromTouches, { passive: true });
+  window.addEventListener('touchcancel', rebuildFromTouches, { passive: true });
+}
+
+// ==== マウス / ペン用 (タッチは上の touch イベントが担当) ====
+const isTouchPointer = (e) => supportsTouch && e.pointerType === 'touch';
 controls.addEventListener('pointerdown', (e) => {
+  if (isTouchPointer(e)) return;
   e.preventDefault();
-  // ボタン外で触れても追跡は開始する (スライドでボタンに入れるように)
-  const names = buttonsAt(e.clientX, e.clientY);
-  heldByPointer.set(e.pointerId, names);
-  applyTouchState(names.length > 0);
+  heldByPointer.set(e.pointerId, buttonsAt(e.clientX, e.clientY));
+  applyTouchState(true);
 });
 controls.addEventListener('pointermove', (e) => {
-  if (!heldByPointer.has(e.pointerId)) return; // 押下中の指のみ追跡
+  if (isTouchPointer(e) || !heldByPointer.has(e.pointerId)) return;
   const names = buttonsAt(e.clientX, e.clientY);
-  const prev = heldByPointer.get(e.pointerId);
-  if (names.join() === prev.join()) return;
+  if (names.join() === heldByPointer.get(e.pointerId).join()) return;
   heldByPointer.set(e.pointerId, names);
   applyTouchState(names.length > 0);
 });
 function releasePointer(e) {
-  if (!heldByPointer.has(e.pointerId)) return;
+  if (isTouchPointer(e) || !heldByPointer.has(e.pointerId)) return;
   heldByPointer.delete(e.pointerId);
   applyTouchState(false);
 }
-// 離す操作はどこで起きても確実に拾う (キャプチャ先が別要素でも取りこぼさない)
 window.addEventListener('pointerup', releasePointer, { capture: true });
 window.addEventListener('pointercancel', releasePointer, { capture: true });
-window.addEventListener('blur', () => { heldByPointer.clear(); applyTouchState(false); });
+
+// ==== 最終安全弁: フォーカス喪失や非表示時は全ボタン強制解放 ====
+function releaseAllButtons() {
+  heldByPointer.clear();
+  applyTouchState(false);
+  if (nes) for (let i = 0; i < 8; i++) nes.pad1.setButton(i, false);
+}
+window.addEventListener('blur', releaseAllButtons);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllButtons(); });
 controls.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------- 入力: キーボード ----------
