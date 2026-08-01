@@ -5,6 +5,7 @@
 
 import { NES, BUTTON } from './nes.js';
 import { buildDemoROM } from './demo.js';
+import { buildQixROM } from './qix.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -217,13 +218,23 @@ window.addEventListener('drop', async (e) => {
   await loadROM(new Uint8Array(buf), file.name);
 });
 
-// 内蔵デモ
+// 内蔵ゲーム (QIX 風陣取り)
 $('btnDemo').addEventListener('click', async () => {
   saveBattery();
-  await loadROM(buildDemoROM(), '内蔵デモ');
-  if (nes && romName === '内蔵デモ') {
-    status('デモ: 十字キー=ボール移動 / A・B=色替え / START=スクロール停止 / SELECT=逆走');
+  await loadROM(buildQixROM(), '内蔵ゲーム QIX');
+  if (nes && romName === '内蔵ゲーム QIX') {
+    status('QIX: 十字キーで空き地を囲んで塗りつぶせ! ●が黄色い線に触れるとミス。バーが▎に届けば勝利');
   }
+});
+
+// 表示チェックデモ (旧デモ)
+$('btnCheck').addEventListener('click', async () => {
+  saveBattery();
+  await loadROM(buildDemoROM(), '表示チェックデモ');
+  if (nes && romName === '表示チェックデモ') {
+    status('チェック: 十字キー=ボール移動 / A・B=色替え / START=スクロール停止 / SELECT=逆走');
+  }
+  menu.hidden = true; paused = false;
 });
 
 // ---------- メニュー ----------

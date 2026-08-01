@@ -4,7 +4,7 @@
   "description": "ブラウザで動くファミコン (NES) エミュレータ — タッチ操作対応のモバイル PWA",
   "type": "module",
   "scripts": {
-    "test": "node test/smoke.mjs",
+    "test": "node test/smoke.mjs && node test/qix.mjs",
     "start": "npx --yes http-server -p 8080 -c-1 ."
   },
   "license": "MIT"
