@@ -5,7 +5,7 @@
 // (スクロールするカラフルな市松模様 + 動くスプライト)
 // ============================================================
 
-class Asm {
+export class Asm {
   constructor(origin) {
     this.origin = origin;
     this.bytes = [];
