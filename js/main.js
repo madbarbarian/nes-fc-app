@@ -218,37 +218,58 @@ function loop(ts) {
 let audioHintShown = false;
 requestAnimationFrame(loop);
 
-// ---------- 入力: タッチ ----------
-function bindTouchButton(el) {
-  const name = el.dataset.btn;
-  const idx = BUTTON[name];
-  const press = (on) => {
-    if (nes) nes.pad1.setButton(idx, on);
-    el.classList.toggle('pressed', on);
-    if (on && navigator.vibrate) navigator.vibrate(8);
-  };
-  el.addEventListener('pointerdown', (e) => { e.preventDefault(); resumeAudio(); press(true); });
-  el.addEventListener('pointerup', (e) => { e.preventDefault(); press(false); });
-  el.addEventListener('pointercancel', () => press(false));
-  el.addEventListener('pointerleave', (e) => { if (e.pointerType === 'touch') press(false); });
-  el.addEventListener('contextmenu', (e) => e.preventDefault());
-}
-document.querySelectorAll('[data-btn]').forEach(bindTouchButton);
+// ---------- 入力: タッチ (指ごとに追跡するマルチタッチ + スライド対応) ----------
+// 各ポインタ(指)がいまどのボタンの上にあるかを Map で管理し、
+// 変化のたびに全ボタンの押下状態を再計算する。
+// これにより「スライドで方向転換したあと指を離すとボタンが残る」バグを防ぐ。
+const controls = $('controls');
+const btnEls = {};
+document.querySelectorAll('[data-btn]').forEach((el) => { btnEls[el.dataset.btn] = el; });
+const heldByPointer = new Map();   // pointerId → ボタン名
+const touchActive = new Set();     // 現在タッチで押されているボタン名
 
-// 十字キーのスライド操作 (指を離さず方向転換)
-const dpad = $('dpad');
-dpad.addEventListener('pointermove', (e) => {
-  if (e.pressure === 0 && e.pointerType !== 'touch') return;
-  const target = document.elementFromPoint(e.clientX, e.clientY);
-  if (!target || !target.dataset || !target.dataset.btn) return;
-  if (!nes) return;
-  for (const dir of ['UP', 'DOWN', 'LEFT', 'RIGHT']) {
-    const el = dpad.querySelector(`[data-btn="${dir}"]`);
-    const on = target.dataset.btn === dir;
-    nes.pad1.setButton(BUTTON[dir], on);
-    el.classList.toggle('pressed', on);
+function applyTouchState(newlyPressed) {
+  touchActive.clear();
+  for (const name of heldByPointer.values()) if (name) touchActive.add(name);
+  for (const name of Object.keys(btnEls)) {
+    const on = touchActive.has(name);
+    if (nes) nes.pad1.setButton(BUTTON[name], on);
+    btnEls[name].classList.toggle('pressed', on);
   }
+  if (newlyPressed && navigator.vibrate) navigator.vibrate(8);
+}
+
+function buttonAt(x, y) {
+  const t = document.elementFromPoint(x, y);
+  const el = t && t.closest ? t.closest('[data-btn]') : null;
+  return el ? el.dataset.btn : null;
+}
+
+controls.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  // ボタン外で触れても追跡は開始する (スライドでボタンに入れるように)
+  const name = buttonAt(e.clientX, e.clientY);
+  heldByPointer.set(e.pointerId, name);
+  applyTouchState(!!name);
 });
+controls.addEventListener('pointermove', (e) => {
+  if (!heldByPointer.has(e.pointerId)) return; // 押下中の指のみ追跡
+  const name = buttonAt(e.clientX, e.clientY);
+  const prev = heldByPointer.get(e.pointerId);
+  if (name === prev) return;
+  heldByPointer.set(e.pointerId, name); // 隙間の上では null (どのボタンも押されない)
+  applyTouchState(!!name);
+});
+function releasePointer(e) {
+  if (!heldByPointer.has(e.pointerId)) return;
+  heldByPointer.delete(e.pointerId);
+  applyTouchState(false);
+}
+// 離す操作はどこで起きても確実に拾う (キャプチャ先が別要素でも取りこぼさない)
+window.addEventListener('pointerup', releasePointer, { capture: true });
+window.addEventListener('pointercancel', releasePointer, { capture: true });
+window.addEventListener('blur', () => { heldByPointer.clear(); applyTouchState(false); });
+controls.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------- 入力: キーボード ----------
 const KEYMAP = {
@@ -270,14 +291,16 @@ function pollGamepad() {
   const gp = pads && pads[0];
   if (!gp || !nes) return;
   const b = (i) => gp.buttons[i] && gp.buttons[i].pressed;
-  nes.pad1.setButton(BUTTON.A, b(1) || b(2));
-  nes.pad1.setButton(BUTTON.B, b(0) || b(3));
-  nes.pad1.setButton(BUTTON.SELECT, b(8));
-  nes.pad1.setButton(BUTTON.START, b(9));
-  nes.pad1.setButton(BUTTON.UP, b(12) || gp.axes[1] < -0.5);
-  nes.pad1.setButton(BUTTON.DOWN, b(13) || gp.axes[1] > 0.5);
-  nes.pad1.setButton(BUTTON.LEFT, b(14) || gp.axes[0] < -0.5);
-  nes.pad1.setButton(BUTTON.RIGHT, b(15) || gp.axes[0] > 0.5);
+  // タッチ入力を上書きしないよう OR で合成する
+  const t = (name) => touchActive.has(name);
+  nes.pad1.setButton(BUTTON.A, b(1) || b(2) || t('A'));
+  nes.pad1.setButton(BUTTON.B, b(0) || b(3) || t('B'));
+  nes.pad1.setButton(BUTTON.SELECT, b(8) || t('SELECT'));
+  nes.pad1.setButton(BUTTON.START, b(9) || t('START'));
+  nes.pad1.setButton(BUTTON.UP, b(12) || gp.axes[1] < -0.5 || t('UP'));
+  nes.pad1.setButton(BUTTON.DOWN, b(13) || gp.axes[1] > 0.5 || t('DOWN'));
+  nes.pad1.setButton(BUTTON.LEFT, b(14) || gp.axes[0] < -0.5 || t('LEFT'));
+  nes.pad1.setButton(BUTTON.RIGHT, b(15) || gp.axes[0] > 0.5 || t('RIGHT'));
 }
 
 // ---------- ファイル読み込み ----------
@@ -370,6 +393,9 @@ $('btnMute').addEventListener('click', () => {
   menu.hidden = true; paused = false;
   resumeAudio();
 });
+
+// デバッグ用: 現在のパッド状態
+window.__fcpPad = () => (nes ? Array.from(nes.pad1.buttons) : null);
 
 // ---------- PWA ----------
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

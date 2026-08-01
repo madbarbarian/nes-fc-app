@@ -126,6 +126,7 @@ body {
 /* ---- コントローラ ---- */
 #controls {
   flex: 0 0 auto;
+  touch-action: none; /* スライド操作中のスクロール発動を防ぐ */
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
