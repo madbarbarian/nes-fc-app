@@ -28,7 +28,8 @@ const PAD = 0x00, PX = 0x02, PY = 0x03,
       DIRTY_R = 0x18, DIRTY_C = 0x19, DIRTY_F = 0x1A,
       TTY = 0x1B, TTX = 0x1C,
       LIVES = 0x1D, PCT = 0x1E, SPEED = 0x1F,
-      OVERF = 0x20, FRAME = 0x21, T1 = 0x22, T2 = 0x23;
+      OVERF = 0x20, FRAME = 0x21, T1 = 0x22, T2 = 0x23,
+      HISTX = 0x24, HISTY = 0x2C, HIDX = 0x34;  // 敵の尾 (位置履歴リング×8)
 
 const START_PX = 16, START_PY = 28;
 const WIN_LO = 0x49, WIN_HI = 0x02;   // 585 セル = 780 の 75%
@@ -61,9 +62,9 @@ export function buildQixROM() {
   a.emit(0x2C, 0x02, 0x20);
   a.emit(0x10); a.rel('rWait2');
 
-  // --- ゼロページ変数クリア ($00-$23) ---
+  // --- ゼロページ変数クリア ($00-$34) ---
   a.emit(0xA9, 0x00);       // LDA #0
-  a.emit(0xA2, 0x23);       // LDX #$23
+  a.emit(0xA2, 0x34);       // LDX #$34
   a.label('zpClr');
   a.emit(0x95, 0x00);       // STA $00,X
   a.emit(0xCA);             // DEX
@@ -174,6 +175,15 @@ export function buildQixROM() {
   a.emit(0xA9, 0x01); a.emit(0x85, DQY);
   a.emit(0xA9, 0x03); a.emit(0x85, MOVEDLY);
   a.emit(0xA9, 0x03); a.emit(0x85, LIVES);
+  // 尾の履歴を敵の初期位置で埋める
+  a.emit(0xA2, 0x07);       // LDX #7
+  a.label('histInit');
+  a.emit(0xA9, 120);
+  a.emit(0x95, HISTX);      // STA HISTX,X
+  a.emit(0xA9, 80);
+  a.emit(0x95, HISTY);      // STA HISTY,X
+  a.emit(0xCA);
+  a.emit(0x10); a.rel('histInit'); // BPL
 
   // --- APU 有効化 (パルス×2 + ノイズ) ---
   a.emit(0xA9, 0x0F);
@@ -330,6 +340,7 @@ export function buildQixROM() {
   a.label('spdExtra');
   a.emit(0x20); a.abs('moveQix');
   a.label('spdSkip');
+  a.emit(0x20); a.abs('updateTail');
   a.emit(0x20); a.abs('buildOAM');
 
   a.label('nmiEnd');
@@ -536,6 +547,66 @@ export function buildQixROM() {
   a.emit(0xA5, QXP);
   a.emit(0x38); a.emit(0xE9, 0x04);         // 中心 → 左上 X
   a.emit(0x8D, 0x07, 0x02);
+  // スプライト2-9: 敵の尾 (履歴の8点)
+  a.emit(0xA0, 0x08);       // LDY #8 (OAM オフセット)
+  a.emit(0xA2, 0x00);       // LDX #0
+  a.label('boTail');
+  a.emit(0xB5, HISTY);      // LDA HISTY,X
+  a.emit(0x38); a.emit(0xE9, 0x04);
+  a.emit(0x99, 0x00, 0x02); // STA $0200,Y
+  a.emit(0xC8);
+  a.emit(0xA9, 0x10);       // 尾タイル (16)
+  a.emit(0x99, 0x00, 0x02);
+  a.emit(0xC8);
+  a.emit(0xA9, 0x01);       // パレット1
+  a.emit(0x99, 0x00, 0x02);
+  a.emit(0xC8);
+  a.emit(0xB5, HISTX);      // LDA HISTX,X
+  a.emit(0x38); a.emit(0xE9, 0x04);
+  a.emit(0x99, 0x00, 0x02);
+  a.emit(0xC8);
+  a.emit(0xE8);             // INX
+  a.emit(0xE0, 0x08);       // CPX #8
+  a.emit(0xD0); a.rel('boTail');
+  a.emit(0x60);             // RTS
+
+  // --- 敵の尾: 履歴記録 & 軌跡との接触判定 ---
+  a.label('updateTail');
+  // 2フレームに1回、現在位置を履歴に記録
+  a.emit(0xA5, FRAME);
+  a.emit(0x29, 0x01);
+  a.emit(0xD0); a.rel('utCheck');
+  a.emit(0xE6, HIDX);
+  a.emit(0xA5, HIDX);
+  a.emit(0x29, 0x07);
+  a.emit(0x85, HIDX);
+  a.emit(0xAA);             // TAX
+  a.emit(0xA5, QXP);
+  a.emit(0x95, HISTX);      // STA HISTX,X
+  a.emit(0xA5, QYP);
+  a.emit(0x95, HISTY);      // STA HISTY,X
+  a.label('utCheck');
+  // 尾の各点が軌跡セルに触れていたらミス
+  a.emit(0xA2, 0x07);       // LDX #7
+  a.label('utLoop');
+  a.emit(0x86, T1);         // STX T1
+  a.emit(0xB5, HISTY);      // LDA HISTY,X
+  a.emit(0x4A); a.emit(0x4A); a.emit(0x4A);
+  a.emit(0xAA);             // TAX (行)
+  setPtrA();
+  a.emit(0xA6, T1);         // LDX T1
+  a.emit(0xB5, HISTX);      // LDA HISTX,X
+  a.emit(0x4A); a.emit(0x4A); a.emit(0x4A);
+  a.emit(0xA8);             // TAY (列)
+  a.emit(0xB1, PTRA);       // LDA (PTRA),Y
+  a.emit(0xC9, 0x02);
+  a.emit(0xF0); a.rel('utDeath');
+  a.emit(0xCA);             // DEX
+  a.emit(0x10); a.rel('utLoop'); // BPL
+  a.emit(0x60);             // RTS
+  a.label('utDeath');
+  a.emit(0xA9, 0x03);
+  a.emit(0x85, MODE);       // MODE=3 (ミス)
   a.emit(0x60);             // RTS
 
   // --- 再描画: 1 vblank に 1 行ずつ ---
@@ -914,6 +985,10 @@ export function buildQixROM() {
       return FONT[d][fy * 3 + fx] === '1' ? 3 : 0;
     });
   }
+  setTile(16, (x, y) => {                                           // 敵の尾 (小さな点)
+    const dx = x - 3.5, dy = y - 3.5;
+    return dx * dx + dy * dy < 4 ? 2 : 0;
+  });
 
   // ---- iNES 組み立て ----
   const rom = new Uint8Array(16 + prg.length + chr.length);
