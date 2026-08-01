@@ -230,7 +230,9 @@ const touchActive = new Set();     // 現在タッチで押されているボタ
 
 function applyTouchState(newlyPressed) {
   touchActive.clear();
-  for (const name of heldByPointer.values()) if (name) touchActive.add(name);
+  for (const names of heldByPointer.values()) {
+    for (const name of names) touchActive.add(name);
+  }
   for (const name of Object.keys(btnEls)) {
     const on = touchActive.has(name);
     if (nes) nes.pad1.setButton(BUTTON[name], on);
@@ -239,26 +241,44 @@ function applyTouchState(newlyPressed) {
   if (newlyPressed && navigator.vibrate) navigator.vibrate(8);
 }
 
-function buttonAt(x, y) {
+// 十字キーはボタン単位ではなくゾーン判定 (中心からの方向で決定):
+// 隙間での取りこぼしがなく、斜め入力 (例: 上+右) も可能になる
+const dpadEl = $('dpad');
+function buttonsAt(x, y) {
+  const r = dpadEl.getBoundingClientRect();
+  const margin = 16; // 十字キー周辺の余白もゾーン扱い
+  if (x >= r.left - margin && x <= r.right + margin &&
+      y >= r.top - margin && y <= r.bottom + margin) {
+    const dx = x - (r.left + r.width / 2);
+    const dy = y - (r.top + r.height / 2);
+    const dead = Math.min(r.width, r.height) * 0.12; // 中央の遊び
+    const out = [];
+    if (Math.hypot(dx, dy) >= dead) {
+      // 8方向判定 (斜め45°±22.5°の範囲で2方向同時)
+      if (Math.abs(dx) > Math.abs(dy) * 0.414) out.push(dx < 0 ? 'LEFT' : 'RIGHT');
+      if (Math.abs(dy) > Math.abs(dx) * 0.414) out.push(dy < 0 ? 'UP' : 'DOWN');
+    }
+    return out;
+  }
   const t = document.elementFromPoint(x, y);
   const el = t && t.closest ? t.closest('[data-btn]') : null;
-  return el ? el.dataset.btn : null;
+  return el && el.dataset.btn ? [el.dataset.btn] : [];
 }
 
 controls.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   // ボタン外で触れても追跡は開始する (スライドでボタンに入れるように)
-  const name = buttonAt(e.clientX, e.clientY);
-  heldByPointer.set(e.pointerId, name);
-  applyTouchState(!!name);
+  const names = buttonsAt(e.clientX, e.clientY);
+  heldByPointer.set(e.pointerId, names);
+  applyTouchState(names.length > 0);
 });
 controls.addEventListener('pointermove', (e) => {
   if (!heldByPointer.has(e.pointerId)) return; // 押下中の指のみ追跡
-  const name = buttonAt(e.clientX, e.clientY);
+  const names = buttonsAt(e.clientX, e.clientY);
   const prev = heldByPointer.get(e.pointerId);
-  if (name === prev) return;
-  heldByPointer.set(e.pointerId, name); // 隙間の上では null (どのボタンも押されない)
-  applyTouchState(!!name);
+  if (names.join() === prev.join()) return;
+  heldByPointer.set(e.pointerId, names);
+  applyTouchState(names.length > 0);
 });
 function releasePointer(e) {
   if (!heldByPointer.has(e.pointerId)) return;
