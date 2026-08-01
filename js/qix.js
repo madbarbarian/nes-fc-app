@@ -30,7 +30,9 @@ const PAD = 0x00, PX = 0x02, PY = 0x03,
       LIVES = 0x1D, PCT = 0x1E, SPEED = 0x1F,
       OVERF = 0x20, FRAME = 0x21, T1 = 0x22, T2 = 0x23,
       HISTX = 0x24, HISTY = 0x30, HIDX = 0x3C,  // 敵の尾 (位置履歴リング×12)
-      SEED = 0x3D, TAILDLY = 0x3E;              // 乱数シード / 尾の記録間隔
+      SEED = 0x3D, TAILDLY = 0x3E,              // 乱数シード / 尾の記録間隔
+      PADPREV = 0x01, PADACC = 0x3F,            // 前フレームのパッド / タップ蓄積
+      PADCUR = 0x40, LASTV = 0x41;              // 今回の実効入力 / 前回の移動軸
 const TAIL_LEN = 12;
 
 const START_PX = 16, START_PY = 28;
@@ -64,9 +66,9 @@ export function buildQixROM() {
   a.emit(0x2C, 0x02, 0x20);
   a.emit(0x10); a.rel('rWait2');
 
-  // --- ゼロページ変数クリア ($00-$3E) ---
+  // --- ゼロページ変数クリア ($00-$41) ---
   a.emit(0xA9, 0x00);       // LDA #0
-  a.emit(0xA2, 0x3E);       // LDX #$3E
+  a.emit(0xA2, 0x41);       // LDX #$41
   a.label('zpClr');
   a.emit(0x95, 0x00);       // STA $00,X
   a.emit(0xCA);             // DEX
@@ -332,6 +334,14 @@ export function buildQixROM() {
   a.label('logicPlay');
   a.emit(0xE6, FRAME);      // INC FRAME
   a.emit(0x20); a.abs('readPad');
+  // 新規押下エッジを PADACC に蓄積 (移動ティック間のタップを取りこぼさない)
+  a.emit(0xA5, PADPREV);
+  a.emit(0x49, 0xFF);       // EOR #$FF
+  a.emit(0x25, PAD);        // AND PAD
+  a.emit(0x05, PADACC);     // ORA PADACC
+  a.emit(0x85, PADACC);
+  a.emit(0xA5, PAD);
+  a.emit(0x85, PADPREV);
   a.emit(0x20); a.abs('movePlayer');
   a.emit(0x20); a.abs('wiggle');   // 敵のランダム方向転換
   // 基本速度: 4フレームに1回休む (うねり+尾のぶん 25% 減速)
@@ -381,26 +391,50 @@ export function buildQixROM() {
   a.emit(0xD0); a.rel('rpLoop');
   a.emit(0x60);             // RTS
 
-  // --- 自機移動 (3フレームに1セル) ---
+  // --- 自機移動 (2フレームに1セル / タップ蓄積 / 縦横交互優先) ---
   a.label('movePlayer');
   a.emit(0xC6, MOVEDLY);    // DEC MOVEDLY
   a.emit(0xF0); a.rel('mpGo');
   a.emit(0x60);             // RTS
   a.label('mpGo');
-  a.emit(0xA9, 0x03);
+  a.emit(0xA9, 0x02);
   a.emit(0x85, MOVEDLY);
-  // 方向判定 (上>下>左>右)
-  a.emit(0xA5, PAD); a.emit(0x29, 0x08);
-  a.emit(0xD0); a.rel('dirUp');
-  a.emit(0xA5, PAD); a.emit(0x29, 0x04);
-  a.emit(0xD0); a.rel('dirDown');
-  a.emit(0xA5, PAD); a.emit(0x29, 0x02);
-  a.emit(0xD0); a.rel('dirLeft');
-  a.emit(0xA5, PAD); a.emit(0x29, 0x01);
-  a.emit(0xD0); a.rel('dirRight');
+  // 実効入力 = 現在押されているボタン + ティック間に押されたタップ
+  a.emit(0xA5, PAD);
+  a.emit(0x05, PADACC);     // ORA PADACC
+  a.emit(0x85, PADCUR);
+  a.emit(0xA9, 0x00);
+  a.emit(0x85, PADACC);
+  // 前回動いた軸と逆の軸を優先 (斜め押しでも左右が無視されない)
+  a.emit(0xA5, LASTV);
+  a.emit(0xF0); a.rel('mpVertFirst');
+  // 前回は縦 → 今回は横優先
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x02);
+  a.emit(0xD0); a.rel('mpJLeft');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x01);
+  a.emit(0xD0); a.rel('mpJRight');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x08);
+  a.emit(0xD0); a.rel('mpJUp');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x04);
+  a.emit(0xD0); a.rel('mpJDown');
   a.emit(0x60);             // RTS (入力なし)
+  a.label('mpVertFirst');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x08);
+  a.emit(0xD0); a.rel('mpJUp');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x04);
+  a.emit(0xD0); a.rel('mpJDown');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x02);
+  a.emit(0xD0); a.rel('mpJLeft');
+  a.emit(0xA5, PADCUR); a.emit(0x29, 0x01);
+  a.emit(0xD0); a.rel('mpJRight');
+  a.emit(0x60);             // RTS (入力なし)
+  a.label('mpJUp');    a.emit(0x4C); a.abs('dirUp');
+  a.label('mpJDown');  a.emit(0x4C); a.abs('dirDown');
+  a.label('mpJLeft');  a.emit(0x4C); a.abs('dirLeft');
+  a.label('mpJRight'); a.emit(0x4C); a.abs('dirRight');
 
   a.label('dirUp');
+  a.emit(0xA9, 0x01); a.emit(0x85, LASTV);
   a.emit(0xA5, PY);
   a.emit(0xC9, 0x02);       // 行1 (リング) より上へは行けない
   a.emit(0xB0); a.rel('duOk');
@@ -412,6 +446,7 @@ export function buildQixROM() {
   a.emit(0x4C); a.abs('tryStep');
 
   a.label('dirDown');
+  a.emit(0xA9, 0x01); a.emit(0x85, LASTV);
   a.emit(0xA5, PY);
   a.emit(0xC9, 0x1C);       // CMP #28
   a.emit(0x90); a.rel('ddOk');
@@ -423,6 +458,7 @@ export function buildQixROM() {
   a.emit(0x4C); a.abs('tryStep');
 
   a.label('dirLeft');
+  a.emit(0xA9, 0x00); a.emit(0x85, LASTV);
   a.emit(0xA5, PX);
   a.emit(0xD0); a.rel('dlOk'); // PX==0 なら不可
   a.emit(0x60);
@@ -433,6 +469,7 @@ export function buildQixROM() {
   a.emit(0x4C); a.abs('tryStep');
 
   a.label('dirRight');
+  a.emit(0xA9, 0x00); a.emit(0x85, LASTV);
   a.emit(0xA5, PX);
   a.emit(0xC9, 0x1F);       // CMP #31
   a.emit(0x90); a.rel('drOk');
