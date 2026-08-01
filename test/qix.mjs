@@ -6,6 +6,7 @@ import { strict as assert } from 'node:assert';
 
 const FIELD = 0x300;
 const PX = 0x02, PY = 0x03, MODE = 0x08, CLM_LO = 0x0B, CLM_HI = 0x0C, WINF = 0x16;
+const LIVES = 0x1D, PCT = 0x1E, SPEED = 0x1F;
 const cell = (nes, row, col) => nes.ram[FIELD + row * 32 + col];
 
 function press(nes, btn, frames) {
@@ -85,6 +86,7 @@ assert.ok(died, 'Qix が軌跡に触れてミスになる');
 assert.ok(waitMode0(nes), 'ミス後の再描画が完了する');
 assert.equal(nes.ram[PX], 16, 'ミス後にスタート位置へ戻る');
 assert.equal(nes.ram[PY], 28, 'ミス後にスタート位置へ戻る');
+assert.equal(nes.ram[LIVES], 2, 'ミスで残機が減る');
 // 軌跡が消えている
 let trails = 0;
 for (let r = 2; r < 28; r++) for (let c = 1; c < 31; c++) if (cell(nes, r, c) === 2) trails++;
@@ -102,12 +104,17 @@ function bigClaim(fromX, toX, topY) {
 }
 // Qix は上半分にいることが多いので、下半分を横いっぱいに囲うのを繰り返す
 let won = false;
-for (let attempt = 0; attempt < 12 && !won; attempt++) {
+for (let attempt = 0; attempt < 40 && !won; attempt++) {
+  if (nes.ram[MODE] === 5) { // ゲームオーバーなら START で再挑戦
+    press(nes, 'START', 5);
+    for (let i = 0; i < 10; i++) nes.runFrame();
+    continue;
+  }
   const qy = nes.ram[0x05] >> 3; // Qix の行
-  const topY = Math.min(26, Math.max(3, qy + 3)); // Qix より下側を狙う
+  const topY = Math.min(26, Math.max(3, qy + 5)); // Qix の十分下側を安全に狙う
   bigClaim(2, 29, topY);
   if (nes.ram[MODE] === 4) { won = true; break; }
-  if (nes.ram[MODE] !== 0) waitMode0(nes);
+  if (nes.ram[MODE] !== 0 && nes.ram[MODE] !== 5) waitMode0(nes);
   if (nes.ram[WINF] === 1 || nes.ram[MODE] === 4) { won = true; break; }
   // ミスした場合もあるのでそのまま次の試行へ
 }
@@ -115,7 +122,47 @@ const clmFinal = nes.ram[CLM_LO] | (nes.ram[CLM_HI] << 8);
 console.log(`最終陣地セル数: ${clmFinal} / 780 (勝利ライン585)`);
 assert.ok(won || clmFinal >= 585, '勝利条件に到達できる');
 assert.ok(waitMode0(nes), '勝利後も安定');
-console.log(`勝利モード: MODE=${nes.ram[MODE]} WINF=${nes.ram[WINF]}`);
+console.log(`勝利モード: MODE=${nes.ram[MODE]} WINF=${nes.ram[WINF]} PCT=${nes.ram[PCT]}% SPEED=${nes.ram[SPEED]}`);
+assert.ok(nes.ram[PCT] >= 75, `獲得率表示が75%以上 (${nes.ram[PCT]})`);
+assert.equal(nes.ram[SPEED], 2, '獲得率55%超で敵が2倍速');
+
+// --- 勝利後 START でリスタート ---
+press(nes, 'START', 5);
+for (let i = 0; i < 10; i++) nes.runFrame();
+assert.equal(nes.ram[MODE], 0, 'START でリスタート');
+assert.equal(nes.ram[LIVES], 3, 'リスタートで残機が戻る');
+const clmRestart = nes.ram[CLM_LO] | (nes.ram[CLM_HI] << 8);
+assert.equal(clmRestart, 0, 'リスタートでフィールドが初期化');
+console.log('リスタート: OK');
+
+// --- ゲームオーバー: 3回ミスで MODE=5 ---
+const nes2 = new NES(44100);
+nes2.loadROM(buildQixROM());
+for (let i = 0; i < 30; i++) nes2.runFrame();
+for (let death = 1; death <= 3; death++) {
+  // 中央へ線を引いて放置し、Qix に切らせる
+  pressUntil(nes2, 'UP', () => nes2.ram[PY] === 14, 600);
+  let hit = false;
+  for (let i = 0; i < 7200; i++) {
+    nes2.runFrame();
+    if (nes2.ram[MODE] === 3 || nes2.ram[MODE] === 2) { hit = true; break; }
+  }
+  assert.ok(hit, `${death}回目のミスが発生する`);
+  for (let i = 0; i < 300; i++) {
+    nes2.runFrame();
+    if (nes2.ram[MODE] === 0 || nes2.ram[MODE] === 5) break;
+  }
+  if (death < 3) {
+    assert.equal(nes2.ram[LIVES], 3 - death, `残機 ${3 - death}`);
+    assert.equal(nes2.ram[MODE], 0, 'まだプレイ続行');
+  }
+}
+assert.equal(nes2.ram[MODE], 5, '残機0でゲームオーバーモード');
+press(nes2, 'START', 5);
+for (let i = 0; i < 10; i++) nes2.runFrame();
+assert.equal(nes2.ram[MODE], 0, 'ゲームオーバーから START で再挑戦');
+assert.equal(nes2.ram[LIVES], 3, '再挑戦で残機3');
+console.log('ゲームオーバー: OK');
 
 // --- 画面検証: フレームに陣地色が出ているか ---
 const frame = nes.runFrame();
