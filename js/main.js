@@ -209,6 +209,7 @@ function loop(ts) {
     accumulator = 0;
   }
   pumpAudio();
+  updateDebugPanel(ts);
   // 音声がブラウザにブロックされたままならヒントを表示
   if (!audioHintShown && audioCtx && audioCtx.state === 'suspended' && !muted) {
     audioHintShown = true;
@@ -265,30 +266,71 @@ function buttonsAt(x, y) {
   return el && el.dataset.btn ? [el.dataset.btn] : [];
 }
 
+// ==== タッチ: touch イベントの e.touches (現在触れている全指の生リスト) から
+// 毎回状態を丸ごと再構築する。個々の down/up を追跡しないため、
+// iOS Safari で離しイベントが配信されない場合でも次のイベントで自己修復する ====
+const supportsTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+function currentKey() {
+  const arr = [];
+  for (const names of heldByPointer.values()) arr.push(...names);
+  return arr.sort().join();
+}
+
+function rebuildFromTouches(e) {
+  const prevKey = currentKey();
+  for (const k of Array.from(heldByPointer.keys())) {
+    if (typeof k === 'string' && k.startsWith('t')) heldByPointer.delete(k);
+  }
+  for (const t of e.touches) {
+    const names = buttonsAt(t.clientX, t.clientY);
+    if (names.length) heldByPointer.set('t' + t.identifier, names);
+  }
+  const key = currentKey();
+  if (key !== prevKey) applyTouchState(key.length > prevKey.length);
+  dlog(`${e.type} n=${e.touches.length} → [${key || 'none'}]`);
+}
+
+if (supportsTouch) {
+  controls.addEventListener('touchstart', (e) => { e.preventDefault(); rebuildFromTouches(e); }, { passive: false });
+  controls.addEventListener('touchmove', (e) => { e.preventDefault(); rebuildFromTouches(e); }, { passive: false });
+  // 離し/キャンセルはどこで起きても全指リストから再構築 (取りこぼし自己修復)
+  window.addEventListener('touchend', rebuildFromTouches, { passive: true });
+  window.addEventListener('touchcancel', rebuildFromTouches, { passive: true });
+}
+
+// ==== マウス / ペン用 (タッチは上の touch イベントが担当) ====
+const isTouchPointer = (e) => supportsTouch && e.pointerType === 'touch';
 controls.addEventListener('pointerdown', (e) => {
+  if (isTouchPointer(e)) return;
   e.preventDefault();
-  // ボタン外で触れても追跡は開始する (スライドでボタンに入れるように)
-  const names = buttonsAt(e.clientX, e.clientY);
-  heldByPointer.set(e.pointerId, names);
-  applyTouchState(names.length > 0);
+  heldByPointer.set(e.pointerId, buttonsAt(e.clientX, e.clientY));
+  applyTouchState(true);
 });
 controls.addEventListener('pointermove', (e) => {
-  if (!heldByPointer.has(e.pointerId)) return; // 押下中の指のみ追跡
+  if (isTouchPointer(e) || !heldByPointer.has(e.pointerId)) return;
   const names = buttonsAt(e.clientX, e.clientY);
-  const prev = heldByPointer.get(e.pointerId);
-  if (names.join() === prev.join()) return;
+  if (names.join() === heldByPointer.get(e.pointerId).join()) return;
   heldByPointer.set(e.pointerId, names);
   applyTouchState(names.length > 0);
 });
 function releasePointer(e) {
-  if (!heldByPointer.has(e.pointerId)) return;
+  if (isTouchPointer(e) || !heldByPointer.has(e.pointerId)) return;
   heldByPointer.delete(e.pointerId);
   applyTouchState(false);
 }
-// 離す操作はどこで起きても確実に拾う (キャプチャ先が別要素でも取りこぼさない)
 window.addEventListener('pointerup', releasePointer, { capture: true });
 window.addEventListener('pointercancel', releasePointer, { capture: true });
-window.addEventListener('blur', () => { heldByPointer.clear(); applyTouchState(false); });
+
+// ==== 最終安全弁: フォーカス喪失や非表示時は全ボタン強制解放 ====
+function releaseAllButtons() {
+  heldByPointer.clear();
+  applyTouchState(false);
+  if (nes) for (let i = 0; i < 8; i++) nes.pad1.setButton(i, false);
+  dlog('forced release (blur/hidden)');
+}
+window.addEventListener('blur', releaseAllButtons);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllButtons(); });
 controls.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------- 入力: キーボード ----------
@@ -416,6 +458,44 @@ $('btnMute').addEventListener('click', () => {
 
 // デバッグ用: 現在のパッド状態
 window.__fcpPad = () => (nes ? Array.from(nes.pad1.buttons) : null);
+
+// ---------- デバッグ表示 (実機での不具合調査用) ----------
+let debugMode = localStorage.getItem('fcp-debug') === '1';
+const debugPanel = $('debugPanel');
+const debugEvents = [];
+let fpsCount = 0, fpsValue = 0, fpsLast = 0;
+
+function dlog(msg) {
+  if (!debugMode) return;
+  const t = (performance.now() / 1000).toFixed(1);
+  debugEvents.push(`${t} ${msg}`);
+  if (debugEvents.length > 10) debugEvents.shift();
+}
+
+const PAD_LABELS = ['A', 'B', 'SE', 'ST', '↑', '↓', '←', '→'];
+function updateDebugPanel(ts) {
+  fpsCount++;
+  if (ts - fpsLast >= 1000) { fpsValue = fpsCount; fpsCount = 0; fpsLast = ts; }
+  if (!debugMode) return;
+  const pad = nes ? Array.from(nes.pad1.buttons) : [];
+  const padStr = PAD_LABELS.map((l, i) => (pad[i] ? `[${l}]` : ` ${l} `)).join('');
+  const au = window.__fcpAudio;
+  debugPanel.textContent =
+    `PAD ${padStr}\n` +
+    `fps=${fpsValue} touches=${heldByPointer.size} ` +
+    `audio=${au ? `${au.mode}/${au.state}` : '-'}\n` +
+    debugEvents.join('\n');
+}
+
+$('btnDebug').addEventListener('click', () => {
+  debugMode = !debugMode;
+  localStorage.setItem('fcp-debug', debugMode ? '1' : '0');
+  debugPanel.hidden = !debugMode;
+  debugEvents.length = 0;
+  status(debugMode ? 'デバッグ表示 ON' : 'デバッグ表示 OFF');
+  menu.hidden = true; paused = false;
+});
+if (debugMode) debugPanel.hidden = false;
 
 // ---------- PWA ----------
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

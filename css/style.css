@@ -123,6 +123,24 @@ body {
   opacity: .7;
 }
 
+/* デバッグ表示 (入力・音声・FPS の生ログ) */
+#debugPanel[hidden] { display: none; }
+#debugPanel {
+  width: 100%;
+  max-width: 480px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, .8);
+  color: #7f7;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  pointer-events: none; /* 操作を邪魔しない */
+}
+
 /* ---- コントローラ ---- */
 #controls {
   flex: 0 0 auto;

@@ -243,6 +243,8 @@ export function buildQixROM() {
   a.emit(0xA9, 0x01);
   a.emit(0x85, OVERF);      // 残機0 → ゲームオーバーフラグ
   a.label('startRedraw');
+  a.emit(0xA9, 0x00);
+  a.emit(0x85, PADACC);     // 凍結中に溜まった古いタップは破棄
   a.emit(0xA9, 0x01);
   a.emit(0x85, DRAWROW);    // 再描画は行1から
   a.emit(0xA9, 0x02);
